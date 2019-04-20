@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
 module Main where
@@ -9,6 +10,7 @@ import Control.Monad (guard)
 import Data.Fixed (mod')
 import Data.Monoid
 import Foreign.C.Types
+import System.Environment
 
 import CoercibleUtils
 import Reflex
@@ -19,20 +21,23 @@ gameSize = V2 800 600
 
 main :: IO ()
 main = do
+  freq <- ffor getArgs \case
+    [f] -> read f :: Double
+    _   -> 20
   initializeAll
   let windowCfg = defaultWindow{ windowInitialSize = gameSize }
   window <- createWindow "reflex-sdl2-test" windowCfg
   r <- createRenderer window (-1) defaultRenderer
   rendererDrawBlendMode r $= BlendAlphaBlend
-  host (app r)
+  host (app freq r)
   destroyRenderer r
   destroyWindow window
   quit
 
 
-app :: ReflexSDL2 t m => Renderer -> m ()
-app r = do
-  dPlayerPos <- getPlayerPos
+app :: (Real f, Fractional f, ReflexSDL2 t m) => f -> Renderer -> m ()
+app freq r = do
+  dPlayerPos <- getPlayerPos freq
   performEvent_ $ ffor (updated dPlayerPos) \pos -> do
     -- liftIO $ putStrLn "state changed, rendering"
     rendererDrawColor r $= V4 0 0 0 255
@@ -65,9 +70,9 @@ getMoveDirection = do
 whenNum :: Num a => a -> Bool -> a
 whenNum a = \b -> if b then a else 0
 
-getPlayerPos :: (ReflexSDL2 t m) => m (Dynamic t (V2 Double))
-getPlayerPos = do
-  eTick <- getPeriodicTick 60
+getPlayerPos :: (Real f, Fractional f, ReflexSDL2 t m) => f -> m (Dynamic t (V2 Double))
+getPlayerPos freq = do
+  eTick <- getPeriodicTick freq
   dMoveDir <- getMoveDirection
   let posChange = current dMoveDir <@ eTick
   fmap (wrapV2 gameSize) <$> foldDyn (+) 0 ((*10) <$> posChange)
@@ -75,5 +80,5 @@ getPlayerPos = do
 wrapV2 :: Real a => V2 a -> V2 a -> V2 a
 wrapV2 = liftA2 (flip mod')
 
-getPeriodicTick :: (ReflexSDL2 t m) => Rational -> m (Event t TickInfo)
-getPeriodicTick freq = tickLossyFromPostBuildTime (fromRational (recip freq))
+getPeriodicTick :: (Real f, Fractional f, ReflexSDL2 t m) => f -> m (Event t TickInfo)
+getPeriodicTick freq = tickLossyFromPostBuildTime (realToFrac (recip freq))
