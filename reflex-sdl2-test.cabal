@@ -24,5 +24,6 @@ executable moving-block
                      , reflex ^>= 0.5
                      , reflex-sdl2 ^>= 0.3
                      , coercible-utils ^>= 0.0
+                     , fixed-timestep ^>= 0.2.0.1
   hs-source-dirs:      moving-block
   default-language:    Haskell2010

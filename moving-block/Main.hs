@@ -6,7 +6,7 @@
 module Main where
 
 import Control.Applicative
-import Control.Monad (guard)
+import Control.Monad
 import Data.Fixed (mod')
 import Data.Monoid
 import Foreign.C.Types
@@ -15,6 +15,7 @@ import System.Environment
 import CoercibleUtils
 import Reflex
 import Reflex.SDL2
+import Time.Repeatedly
 
 gameSize :: Num a => V2 a
 gameSize = V2 800 600
@@ -80,5 +81,9 @@ getPlayerPos freq = do
 wrapV2 :: Real a => V2 a -> V2 a -> V2 a
 wrapV2 = liftA2 (flip mod')
 
-getPeriodicTick :: (Real f, Fractional f, ReflexSDL2 t m) => f -> m (Event t TickInfo)
-getPeriodicTick freq = tickLossyFromPostBuildTime (realToFrac (recip freq))
+getPeriodicTick :: (Real f, Fractional f, ReflexSDL2 t m) => f -> m (Event t ())
+getPeriodicTick freq = do
+  let timer cb = void . liftIO $ asyncRepeatedly (toRational freq) (cb ())
+  eBuilt <- getPostBuild
+  performEventAsync (timer <$ eBuilt)
+  
