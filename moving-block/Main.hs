@@ -47,7 +47,9 @@ drawLayer = tellDyn . fmap pure
 hostLayers :: Renderer -> DynamicWriterT Spider [Layer ConcreteReflexSDL2] ConcreteReflexSDL2 () -> IO ()
 hostLayers r guest = host do
   (_, dLayers) <- runDynamicWriterT guest
-  performEvent_ $ ffor (updated dLayers) \layers -> do
+  ePB <- getPostBuild
+  let eDisplay = leftmost [updated dLayers, [] <$ ePB]
+  performEvent_ $ ffor eDisplay \layers -> do
     rendererDrawColor r $= V4 0 0 0 255
     clear r
     traverse_ ($ r) layers
@@ -55,7 +57,7 @@ hostLayers r guest = host do
 
 app :: (ReflexSDL2 t m, MonadLayer t m) => m ()
 app = do
-  _ <- movableBox arrowKeys 10 10
+  _ <- movableBox arrowKeys 50 100
   shutdownOn =<< delay 0 =<< getQuitEvent
 
 getIsKeyDown :: ReflexSDL2 t m => Scancode -> m (Dynamic t Bool)
@@ -96,12 +98,13 @@ movableBox :: (ReflexSDL2 t m, MonadLayer t m) => MoveKeys -> Double -> V2 Int -
 movableBox keys speed halfSize = do
   dMoveDir <- getMoveDirection keys
   eTick <- getDeltaTickEvent
-  let eUpdate = attachWith update (current dMoveDir) eTick
+  ePB <- getPostBuild
+  let eUpdate = attachWith update (current dMoveDir) $ leftmost [eTick, 0 <$ ePB]
       update dir dt = \pos -> wrapV2 gameSize (pos + dir * V2 speed speed * fromIntegral dt / 1000)
-  dBoxPos <- holdUniqDyn =<< (fmap . fmap) round <$> foldDyn id 0 eUpdate
+  dBoxPos <- (fmap . fmap) round <$> foldDyn id 0 eUpdate
   drawLayer $ ffor dBoxPos \pos r -> do
     rendererDrawColor r $= V4 255 0 0 255
-    drawRect r (Just (fromIntegral <$> Rectangle (P (pos - halfSize)) (halfSize*2)))
+    fillRect r (Just (fromIntegral <$> Rectangle (P (pos - halfSize)) (halfSize*2)))
   pure dBoxPos
 
 getPeriodicTick :: (ReflexSDL2 t m) => Double -> m (Event t ())
