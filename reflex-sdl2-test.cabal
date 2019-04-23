@@ -16,14 +16,33 @@ maintainer:          nstamm@gmx.de
 -- category:
 extra-source-files:  CHANGELOG.md
 
-executable moving-block
-  main-is:             Main.hs
-  -- other-modules:
-  -- other-extensions:
+common basic-deps
   build-depends:       base ^>=4.12.0.0
+                     , lens ^>=4.17
                      , reflex ^>= 0.5
                      , reflex-sdl2 ^>= 0.3
-                     , coercible-utils ^>= 0.0
+  default-language:   Haskell2010
+
+library reflextra
+  import: basic-deps
+  hs-source-dirs:     reflextra
+  exposed-modules:    Reflex.SDL2.Layers
+                    , Reflex.SDL2.Keys
+
+executable moving-block
+  import: basic-deps
+  main-is:             MovingBlock.hs
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       coercible-utils ^>= 0.0
                      , fixed-timestep ^>= 0.2.0.1
+                     , reflextra
   hs-source-dirs:      moving-block
-  default-language:    Haskell2010
+
+executable pong
+  import: basic-deps
+  main-is:             Pong.hs
+  build-depends:       coercible-utils ^>= 0.0
+                     , random ^>= 1.1
+                     , reflextra
+  hs-source-dirs:      pong
