@@ -8,6 +8,7 @@ module Main where
 
 import Control.Applicative
 import Control.Monad
+import Data.Functor
 
 import Control.Lens ((^.), over)
 import Reflex
@@ -32,13 +33,24 @@ main = do
   destroyWindow window
   quit
 
-app :: (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t)) => m ()
+app :: (ReflexSDL2 t m, MonadLayer t m, MonadSample t (Performable m)) => m ()
 app = do
   dPaddleL <- verticalPaddle defaultPaddle{paddleXOffset = 100, paddleYRange = 500}
                 =<< axisKeyControl ScancodeW  ScancodeS
   dPaddleR <- verticalPaddle defaultPaddle{paddleXOffset = 700, paddleYRange = 500}
                 =<< axisKeyControl ScancodeUp ScancodeDown
-  (dBall, eScore) <- ball dPaddleL dPaddleR 20
+  (dBall, ePoint) <- ball dPaddleL dPaddleR 20
+  dScore <- trackScores ePoint
+  eQuit <- getQuitEvent
+  performEvent_ $ eQuit $> do
+    Scores scoreL scoreR <- sample (current dScore)
+    liftIO . putStrLn $ concat
+      [ "Final score: Left "
+      , show scoreL
+      , " - "
+      , show scoreR
+      , " Right"
+      ]
   shutdownOn =<< delay 0 =<< getQuitEvent
 
 data PaddleConfig = PaddleConfig
@@ -85,6 +97,14 @@ verticalPaddle cfg dControl = do
 
 data Player = LeftPlayer | RightPlayer
 
+data Scores = Scores !Int !Int
+
+trackScores :: ReflexSDL2 t m => Event t Player -> m (Dynamic t Scores)
+trackScores = foldDyn addPoint (Scores 0 0)
+  where
+    addPoint LeftPlayer (Scores l r) = Scores (l+1) r
+    addPoint RightPlayer (Scores l r) = Scores l (r+1)
+
 data Edge = LeftEdge | RightEdge | TopEdge | BottomEdge
 
 edgePlayer :: Edge -> Maybe Player
@@ -92,16 +112,11 @@ edgePlayer LeftEdge  = Just LeftPlayer
 edgePlayer RightEdge = Just RightPlayer
 edgePlayer _         = Nothing
 
-data Ball a = Ball
-  { ballPos :: V2 a
-  , ballVel :: V2 a
-  } deriving (Show, Functor)
-
-ball :: forall t m. (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t))
+ball :: forall t m. (ReflexSDL2 t m, MonadLayer t m)
      => Dynamic t (Rectangle Int)
      -> Dynamic t (Rectangle Int)
      -> Int
-     -> m (Dynamic t (Ball Int), Event t Player)
+     -> m (Dynamic t (V2 Int), Event t Player)
 ball dLeftPaddle dRightPaddle rad = do
   let radius = fromIntegral rad
       colliding leftPaddle rightPaddle pos
@@ -165,7 +180,7 @@ ball dLeftPaddle dRightPaddle rad = do
   drawLayer $ ffor dBallPos \pos r -> do
     rendererDrawColor r $= V4 255 0 0 255
     fillRect r (Just (round <$> ballRect pos))
-  pure ( fmap round <$> zipDynWith Ball dBallPos dBallVel
+  pure ( fmap round <$> dBallPos
        , eHBoundsCollision dBallPos)
 
 rectsIntersect :: (Num a, Ord a) => Rectangle a -> Rectangle a -> Bool
