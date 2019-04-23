@@ -83,7 +83,14 @@ verticalPaddle cfg dControl = do
                                           paddleSize))
   pure $ ffor dPaddleY \y -> Rectangle (P (V2 (paddleXOffset cfg - 10) y)) paddleSize
 
-data Side = LeftPlayer | RightPlayer
+data Player = LeftPlayer | RightPlayer
+
+data Edge = LeftEdge | RightEdge | TopEdge | BottomEdge
+
+edgePlayer :: Edge -> Maybe Player
+edgePlayer LeftEdge  = Just LeftPlayer
+edgePlayer RightEdge = Just RightPlayer
+edgePlayer _         = Nothing
 
 data Ball a = Ball
   { ballPos :: V2 a
@@ -94,12 +101,12 @@ ball :: forall t m. (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t))
      => Dynamic t (Rectangle Int)
      -> Dynamic t (Rectangle Int)
      -> Int
-     -> m (Dynamic t (Ball Int), Event t Side)
+     -> m (Dynamic t (Ball Int), Event t Player)
 ball dLeftPaddle dRightPaddle rad = do
   let radius = fromIntegral rad
       colliding leftPaddle rightPaddle pos
-        = rectsIntersect (fromIntegral <$> leftPaddle) (ballRect pos)
-          || rectsIntersect (fromIntegral <$> rightPaddle) (ballRect pos)
+        = LeftEdge <$ guard (rectsIntersect (fromIntegral <$> leftPaddle) (ballRect pos))
+          <|> RightEdge <$ guard (rectsIntersect (fromIntegral <$> rightPaddle) (ballRect pos))
       dPaddleCollider = zipDynWith colliding dLeftPaddle dRightPaddle
 
       startPos = gameSize / 2
@@ -109,6 +116,11 @@ ball dLeftPaddle dRightPaddle rad = do
 
       ballRect pos = Rectangle (P (pos - ballSizeHalf)) ballSize
       
+      reflect LeftEdge   = over _x abs
+      reflect RightEdge  = over _x (negate . abs)
+      reflect TopEdge    = over _y abs
+      reflect BottomEdge = over _y (negate . abs)
+
       randomVel :: MonadIO m' => m' (V2 Double)
       randomVel = liftIO do
         u <- angle <$> randomRIO (0, 2*pi)
@@ -119,16 +131,17 @@ ball dLeftPaddle dRightPaddle rad = do
   ePostBuild <- getPostBuild
 
   let dIsCollidingPaddle dBallPos = zipDynWith ($) dPaddleCollider dBallPos
-      ePaddleCollision   dBallPos = fforMaybe (updated (dIsCollidingPaddle dBallPos)) guard
+      ePaddleCollision   dBallPos = fforMaybe (updated (dIsCollidingPaddle dBallPos)) id
       eVBoundsCollision  dBallPos = fforMaybe (updated (dBallPos))
                                       \pos -> let closeTop = pos ^._y < radius
                                                   closeBot = pos ^._y > gameSize ^._y - radius
-                                              in guard (closeTop || closeBot)
+                                              in TopEdge <$ guard closeTop
+                                                <|> BottomEdge <$ guard closeBot
       eHBoundsCollision  dBallPos = fforMaybe (updated dBallPos)
                                       \pos -> let closeL = pos ^._x < 0
                                                   closeR = pos ^._x > gameSize ^._x
-                                              in (RightPlayer <$ guard closeL)
-                                                <|> (LeftPlayer <$ guard closeR)
+                                              in RightPlayer <$ guard closeL
+                                                <|> LeftPlayer <$ guard closeR
       
   rec dBallPos :: Dynamic t (V2 Double) <- foldDyn ($) startPos =<< delay 0 ePosUpdate
       
@@ -143,8 +156,8 @@ ball dLeftPaddle dRightPaddle rad = do
       
       eVelUpdate :: Event t (V2 Double -> V2 Double) <- do
         let eBounce = mergeWith (.)
-              [ over _x negate <$ ePaddleCollision dBallPos
-              , over _y negate <$ eVBoundsCollision dBallPos
+              [ reflect <$> ePaddleCollision dBallPos
+              , reflect <$> eVBoundsCollision dBallPos
               ]
         eStart <- performEvent (randomVel <$ ePostBuild)
         eReset <- performEvent (randomVel <$ eHBoundsCollision dBallPos)
@@ -152,7 +165,8 @@ ball dLeftPaddle dRightPaddle rad = do
   drawLayer $ ffor dBallPos \pos r -> do
     rendererDrawColor r $= V4 255 0 0 255
     fillRect r (Just (round <$> ballRect pos))
-  pure (fmap round <$> zipDynWith Ball dBallPos dBallVel, eHBoundsCollision dBallPos)
+  pure ( fmap round <$> zipDynWith Ball dBallPos dBallVel
+       , eHBoundsCollision dBallPos)
 
 rectsIntersect :: (Num a, Ord a) => Rectangle a -> Rectangle a -> Bool
 rectsIntersect (Rectangle (P p) (V2 x y)) r2 = any (`inRect` r2)
