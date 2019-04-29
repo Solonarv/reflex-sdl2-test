@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Reflex.SDL2.Text where
 
+import Control.Monad.Reader.Class
 import Reflex
 import Reflex.SDL2
 import qualified SDL.Font as TTF
@@ -31,6 +32,21 @@ renderedTextSurface dStyle dText = do
   let dRenderAction = zipDynWith renderStyledText dStyle dText
   dynMapIO id dRenderAction
 
+renderedText :: ( PerformEvent t m
+                , MonadIO (Performable m)
+                , MonadHold t m
+                , MonadIO (PushM t)
+                , MonadReader Renderer m
+                )
+             => Dynamic t TextRenderStyle
+             -> Dynamic t Text
+             -> m (Dynamic t Texture)
+renderedText dStyle dText = do
+  dTextSurf <- renderedTextSurface dStyle dText
+  r <- ask
+  dynMapIO (createTextureFromSurface r) dTextSurf
+
+
 dynMapIO :: (PerformEvent t m
             , MonadIO (Performable m)
             , MonadHold t m
@@ -41,8 +57,6 @@ dynMapIO :: (PerformEvent t m
          -> m (Dynamic t b)
 dynMapIO f dA = do
   eUpd <- performEvent (liftIO . f <$> updated dA)
-  let mUpd = do
-        a <- sample (current dA)
-        liftIO (f a)
+  let mUpd = liftIO . f =<< sample (current dA)
   buildDynamic mUpd eUpd
 

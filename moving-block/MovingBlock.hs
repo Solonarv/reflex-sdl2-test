@@ -16,6 +16,7 @@ import Foreign.C.Types
 import System.Environment
 
 import CoercibleUtils
+import Control.Monad.Reader
 import Reflex
 import Reflex.SDL2
 import Time.Repeatedly
@@ -73,7 +74,8 @@ movableBox keys speed halfSize = do
   let eUpdate = attachWith update (current dMoveDir) $ leftmost [eTick, 0 <$ ePB]
       update dir dt = \pos -> wrapV2 gameSize (pos + fmap (signedValue speed) dir * fromIntegral dt / 1000)
   dBoxPos <- (fmap . fmap) round <$> foldDyn id 0 eUpdate
-  drawLayer $ ffor dBoxPos \pos r -> do
+  drawLayer $ ffor dBoxPos \pos -> do
+    r <- ask
     rendererDrawColor r $= V4 255 0 0 255
     fillRect r (Just (fromIntegral <$> Rectangle (P (pos - halfSize)) (halfSize*2)))
   pure dBoxPos

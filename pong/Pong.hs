@@ -11,12 +11,17 @@ import Control.Monad
 import Data.Functor
 
 import Control.Lens ((^.), over)
+import Control.Monad.Reader
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Reflex
 import Reflex.SDL2
-import System.Random (randomRIO)
+import qualified SDL.Font as TTF
+import System.Random (randomRIO, randomIO)
 
 import Reflex.SDL2.Layers
 import Reflex.SDL2.Keys
+import Reflex.SDL2.Text
 
 gameSize :: Num a => V2 a
 gameSize = V2 800 600
@@ -24,6 +29,7 @@ gameSize = V2 800 600
 main :: IO ()
 main = do
   initializeAll
+  TTF.initialize
   let windowCfg = defaultWindow{ windowInitialSize = gameSize }
   window <- createWindow "PONG - WS / arrow keys" windowCfg
   r <- createRenderer window (-1) defaultRenderer
@@ -31,9 +37,10 @@ main = do
   hostLayers r app
   destroyRenderer r
   destroyWindow window
+  TTF.quit
   quit
 
-app :: (ReflexSDL2 t m, MonadLayer t m, MonadSample t (Performable m)) => m ()
+app :: (ReflexSDL2 t m, MonadLayer t m, MonadSample t (Performable m), MonadIO (PushM t)) => m ()
 app = do
   dPaddleL <- verticalPaddle defaultPaddle{paddleXOffset = 100, paddleYRange = 500}
                 =<< axisKeyControl ScancodeW  ScancodeS
@@ -41,6 +48,7 @@ app = do
                 =<< axisKeyControl ScancodeUp ScancodeDown
   (dBall, ePoint) <- ball dPaddleL dPaddleR 20
   dScore <- trackScores ePoint
+  renderScore dScore
   eQuit <- getQuitEvent
   performEvent_ $ eQuit $> do
     Scores scoreL scoreR <- sample (current dScore)
@@ -88,7 +96,8 @@ verticalPaddle cfg dControl = do
   let eFracTick = fmap ((/1000) . fromIntegral) eTick
       eUpdate = attachWith (*) (current dSpeed) eFracTick
   dPaddleY <- fmap round <$> foldDyn (\dy y -> clamp minY maxY $ dy + y) startY eUpdate
-  drawLayer $ ffor dPaddleY \y r -> do
+  drawLayer $ ffor dPaddleY \y -> do
+    r <- ask
     rendererDrawColor r $= V4 255 255 0 255
     fillRect r (Just (fromIntegral <$>
                         Rectangle (P (V2 (paddleXOffset cfg - 10) y))
@@ -138,9 +147,10 @@ ball dLeftPaddle dRightPaddle rad = do
 
       randomVel :: MonadIO m' => m' (V2 Double)
       randomVel = liftIO do
-        u <- angle <$> randomRIO (0, 2*pi)
+        V2 ux uy <- angle <$> randomRIO (-pi/4, pi/4)
         l <- randomRIO (70, 130)
-        pure (l *^ u)
+        dir <- randomIO
+        pure if dir then l *^ V2 ux uy else l *^ V2 (-ux) uy
   
   eFracTick  <- fmap ((/1000) . fromIntegral) <$> getDeltaTickEvent 
   ePostBuild <- getPostBuild
@@ -177,7 +187,8 @@ ball dLeftPaddle dRightPaddle rad = do
         eStart <- performEvent (randomVel <$ ePostBuild)
         eReset <- performEvent (randomVel <$ eHBoundsCollision dBallPos)
         pure $ leftmost [const <$> eStart, const <$> eReset, eBounce]
-  drawLayer $ ffor dBallPos \pos r -> do
+  drawLayer $ ffor dBallPos \pos -> do
+    r <- ask
     rendererDrawColor r $= V4 255 0 0 255
     fillRect r (Just (round <$> ballRect pos))
   pure ( fmap round <$> dBallPos
@@ -197,3 +208,22 @@ inRect q (Rectangle (P p) (V2 dx dy)) = inX && inY
     V2 x y = q - p
     inX = 0 <= x && x <= dx
     inY = 0 <= y && y <= dy
+
+renderScore :: (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t)) => Dynamic t Scores -> m ()
+renderScore dScore = do
+  dStyle <- flip buildDynamic never $ do
+    font <- TTF.load "OpenSans-Regular.ttf" 32
+    pure (TextBlended font (V4 192 192 255 255))
+  dText <- renderedText dStyle $ ffor dScore \(Scores l r) -> mconcat [tshow l, " | ", tshow r]
+  drawLayer $ ffor dText \tex -> do
+    info <- queryTexture tex
+    r <- ask
+    let dest = Rectangle (P destV) (V2 w h)
+        w = textureWidth info
+        h = textureHeight info
+        destV = V2 destX 0
+        destX = (gameSize^._x - w) `div` 2
+    copy r tex Nothing (Just dest)    
+
+tshow :: Show a => a -> Text
+tshow = Text.pack . show
