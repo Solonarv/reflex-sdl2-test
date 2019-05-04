@@ -19,6 +19,9 @@ import Reflex.SDL2
 import qualified SDL.Font as TTF
 import System.Random (randomRIO, randomIO)
 
+import IOCache (DCache)
+import qualified IOCache
+
 import Reflex.SDL2.Layers
 import Reflex.SDL2.Keys
 import Reflex.SDL2.Text
@@ -34,21 +37,23 @@ main = do
   window <- createWindow "PONG - WS / arrow keys" windowCfg
   r <- createRenderer window (-1) defaultRenderer
   rendererDrawBlendMode r $= BlendAlphaBlend
-  hostLayers r app
+  fntCache <- IOCache.new loadFontSpec freeFont IOCache.CollectNever 
+  txtCache <- IOCache.new (mkRenderText r fntCache) freeTexture (IOCache.CollectEveryNthGet 30 3)
+  hostLayers r (app txtCache)
   destroyRenderer r
   destroyWindow window
   TTF.quit
   quit
 
-app :: (ReflexSDL2 t m, MonadLayer t m, MonadSample t (Performable m), MonadIO (PushM t)) => m ()
-app = do
+app :: (ReflexSDL2 t m, MonadLayer t m, MonadSample t (Performable m), MonadIO (PushM t)) => TextCache IO -> m ()
+app txtCache = do
   dPaddleL <- verticalPaddle defaultPaddle{paddleXOffset = 100, paddleYRange = 500}
                 =<< axisKeyControl ScancodeW  ScancodeS
   dPaddleR <- verticalPaddle defaultPaddle{paddleXOffset = 700, paddleYRange = 500}
                 =<< axisKeyControl ScancodeUp ScancodeDown
   (dBall, ePoint) <- ball dPaddleL dPaddleR 20
   dScore <- trackScores ePoint
-  renderScore dScore
+  renderScore txtCache dScore
   eQuit <- getQuitEvent
   performEvent_ $ eQuit $> do
     Scores scoreL scoreR <- sample (current dScore)
@@ -195,12 +200,10 @@ ball dLeftPaddle dRightPaddle rad = do
        , eHBoundsCollision dBallPos)
 
 rectsIntersect :: (Num a, Ord a) => Rectangle a -> Rectangle a -> Bool
-rectsIntersect (Rectangle (P p) (V2 x y)) r2 = any (`inRect` r2)
-  [ p
-  , p + V2 x 0
-  , p + V2 x y
-  , p + V2 0 y
-  ]
+rectsIntersect (Rectangle (P p) dp) (Rectangle (P q) dq) = 
+  let expanded = Rectangle (P (q - dp)) (dq + dp)
+  in p `inRect` expanded
+
 
 inRect :: (Num a, Ord a) => V2 a -> Rectangle a -> Bool
 inRect q (Rectangle (P p) (V2 dx dy)) = inX && inY
@@ -209,12 +212,15 @@ inRect q (Rectangle (P p) (V2 dx dy)) = inX && inY
     inX = 0 <= x && x <= dx
     inY = 0 <= y && y <= dy
 
-renderScore :: (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t)) => Dynamic t Scores -> m ()
-renderScore dScore = do
-  dStyle <- flip buildDynamic never $ do
-    font <- TTF.load "OpenSans-Regular.ttf" 32
-    pure (TextBlended font (V4 192 192 255 255))
-  dText <- renderedText dStyle $ ffor dScore \(Scores l r) -> mconcat [tshow l, " | ", tshow r]
+renderScore :: (ReflexSDL2 t m, MonadLayer t m, MonadIO (PushM t)) => TextCache IO -> Dynamic t Scores -> m ()
+renderScore txtCache dScore = do
+  let style = TextBlended (V4 192 192 255 255)
+      font = FontSpec "OpenSans-Regular.ttf" 32 0
+  dText <- renderedText txtCache $ ffor dScore \(Scores l r) -> TextRenderRequest
+    { trrText = mconcat [tshow l, " | ", tshow r]
+    , trrFont = font
+    , trrStyle = style
+    }
   drawLayer $ ffor dText \tex -> do
     info <- queryTexture tex
     r <- ask
